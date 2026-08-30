@@ -52,9 +52,9 @@ Backed by Supabase Postgres via `lib/server/wedding-repository.js`.
 | `/api/submissions` | POST | Submit a mission answer (created as `pending`) |
 | `/api/leaderboard` | GET | Top 5 guests by points |
 
-Full request/response schemas: [`docs/openapi.yaml`](docs/openapi.yaml). With the
-dev server running, browse it at `http://localhost:3000/api-docs.html` (Swagger
-UI; the spec is served from `/api/openapi`).
+Full request/response schemas: [`public/openapi.yaml`](public/openapi.yaml).
+Browse it as Swagger UI at `/api-docs.html` (served statically; the spec loads
+from `/openapi.yaml`).
 
 ## Connecting the production backend
 

@@ -14,10 +14,10 @@ info:
     currently taken from the request body; step 3 moves it to the session
     cookie.
 servers:
+  - url: /
+    description: Same origin as the docs page
   - url: http://localhost:3000
     description: Local dev
-  - url: http://localhost:3001
-    description: Local dev (fallback port)
 
 tags:
   - name: System

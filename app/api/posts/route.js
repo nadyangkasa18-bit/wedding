@@ -1,22 +1,9 @@
-import { createWallPost, getWallPosts } from "@/lib/server/wedding-repository";
+import { getWallPosts } from "@/lib/server/wedding-repository";
 
+export const dynamic = "force-dynamic";
+
+// The wall shows approved submissions only. Creating one is POST /api/submissions.
 export async function GET() {
   const posts = await getWallPosts();
   return Response.json({ posts });
-}
-
-export async function POST(request) {
-  const body = await request.json();
-  const required = ["name", "table", "mission", "body", "points"];
-  const missing = required.filter((field) => body[field] === undefined || body[field] === "");
-
-  if (missing.length) {
-    return Response.json(
-      { error: "Missing required fields", fields: missing },
-      { status: 400 },
-    );
-  }
-
-  const post = await createWallPost(body);
-  return Response.json({ post }, { status: 201 });
 }

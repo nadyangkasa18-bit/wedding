@@ -1,0 +1,359 @@
+openapi: 3.1.0
+info:
+  title: Wedding Missions API
+  version: 0.1.0
+  description: >
+    HTTP API for the wedding missions app. All routes live under `/api` and are
+    served by Next.js route handlers backed by Supabase Postgres
+    (`lib/server/wedding-repository.js`).
+
+
+    **Not yet implemented** (tracked separately): guest session auth
+    (last-4-digits name claim -> signed cookie), photo upload signed URLs, and
+    the `/api/admin/*` backoffice (CSV import, moderation). `guestId` is
+    currently taken from the request body; step 3 moves it to the session
+    cookie.
+servers:
+  - url: http://localhost:3000
+    description: Local dev
+  - url: http://localhost:3001
+    description: Local dev (fallback port)
+
+tags:
+  - name: System
+  - name: Missions
+  - name: Guests
+  - name: Wall
+  - name: Leaderboard
+
+paths:
+  /api/health:
+    get:
+      tags: [System]
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service]
+                properties:
+                  status: { type: string, example: ok }
+                  service: { type: string, example: wedding-missions }
+
+  /api/missions:
+    get:
+      tags: [Missions]
+      summary: List active missions (the card deck)
+      description: Ordered by `sort_order`, then `id`. Inactive missions are omitted.
+      responses:
+        "200":
+          description: Active missions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [missions]
+                properties:
+                  missions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Mission" }
+
+  /api/guests:
+    get:
+      tags: [Guests]
+      summary: Search guests by name
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: >
+            Case-insensitive substring match on the guest's name. Omitted or
+            empty returns the first 8 guests alphabetically. Always capped at 8.
+      responses:
+        "200":
+          description: Matching guests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [guests]
+                properties:
+                  guests:
+                    type: array
+                    items: { $ref: "#/components/schemas/Guest" }
+
+  /api/guests/{id}:
+    get:
+      tags: [Guests]
+      summary: Viewer bootstrap — guest record, score, and deck position
+      parameters:
+        - $ref: "#/components/parameters/GuestId"
+      responses:
+        "200":
+          description: Guest found
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [guest, score, progress]
+                properties:
+                  guest: { $ref: "#/components/schemas/GuestWithClaim" }
+                  score: { $ref: "#/components/schemas/Score" }
+                  progress: { $ref: "#/components/schemas/Progress" }
+        "404":
+          description: No guest with that id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/guests/{id}/progress:
+    put:
+      tags: [Guests]
+      summary: Save the guest's position in the mission deck
+      parameters:
+        - $ref: "#/components/parameters/GuestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [missionIndex]
+              properties:
+                missionIndex:
+                  type: integer
+                  minimum: 0
+                  description: Zero-based index into the mission deck.
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "400":
+          description: Invalid JSON or missionIndex
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/posts:
+    get:
+      tags: [Wall]
+      summary: The wedding wall — approved submissions only
+      description: >
+        Returns at most 100 submissions with `status = 'approved'`, newest
+        first. Pending and rejected submissions are never exposed here.
+      responses:
+        "200":
+          description: Approved wall posts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [posts]
+                properties:
+                  posts:
+                    type: array
+                    items: { $ref: "#/components/schemas/WallPost" }
+
+  /api/submissions:
+    post:
+      tags: [Wall]
+      summary: Submit a mission answer
+      description: >
+        Creates a submission with `status = 'pending'`. Points count toward the
+        guest's total immediately (the leaderboard sums everything not
+        rejected); an admin rejection later deducts them. `body` is required for
+        `text` missions, `mediaUrl` for `photo` missions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [guestId, missionId]
+              properties:
+                guestId:
+                  type: string
+                  description: >
+                    Currently supplied by the client. Step 3 will derive this
+                    from the signed guest session cookie and ignore the body.
+                missionId: { type: integer }
+                body:
+                  type: [string, "null"]
+                  description: Text answer. Trimmed; empty becomes null.
+                mediaUrl:
+                  type: [string, "null"]
+                  description: >
+                    URL of uploaded photo/video proof. Until the upload flow
+                    lands (step 4) the client sends a `pending-upload:<filename>`
+                    placeholder.
+                mediaType:
+                  type: [string, "null"]
+      responses:
+        "201":
+          description: Submission created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [submission, score]
+                properties:
+                  submission: { $ref: "#/components/schemas/SubmissionResult" }
+                  score: { $ref: "#/components/schemas/Score" }
+        "400":
+          description: >
+            Invalid JSON, missing/unknown guest, unknown or inactive mission, or
+            missing content for the mission kind.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Unexpected write failure
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/leaderboard:
+    get:
+      tags: [Leaderboard]
+      summary: Top 5 guests by points
+      description: >
+        Derived from the `guest_scores` view: `SUM(points)` over submissions
+        where `status <> 'rejected'`. Guests with 0 points are excluded.
+      responses:
+        "200":
+          description: Leaderboard
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [leaders]
+                properties:
+                  leaders:
+                    type: array
+                    items: { $ref: "#/components/schemas/LeaderboardEntry" }
+
+components:
+  parameters:
+    GuestId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Guest id (slug for seeded guests, uuid for imported ones).
+
+  schemas:
+    Guest:
+      type: object
+      required: [id, name, table, relation, from]
+      properties:
+        id: { type: string, example: guest-alex }
+        name: { type: string, example: Alex Tan }
+        table: { type: [string, "null"], example: "Dahlia · 09" }
+        relation: { type: [string, "null"], example: College friend }
+        from:
+          type: [string, "null"]
+          description: Guest's hometown.
+          example: Singapore
+
+    GuestWithClaim:
+      allOf:
+        - $ref: "#/components/schemas/Guest"
+        - type: object
+          properties:
+            claimedAt:
+              type: [string, "null"]
+              format: date-time
+              description: When the guest verified their name, or null if unclaimed.
+
+    Mission:
+      type: object
+      required: [id, kicker, title, points, kind, color]
+      properties:
+        id: { type: integer, example: 1 }
+        kicker: { type: string, example: Find your twin }
+        title:
+          type: string
+          example: Take a photo with someone wearing the same colour as you.
+        note:
+          type: [string, "null"]
+          example: The less coordinated, the better.
+        points: { type: integer, example: 20 }
+        kind: { type: string, enum: [photo, text] }
+        color:
+          type: string
+          enum: [coral, butter, blue, sage, lilac, rose]
+
+    WallPost:
+      type: object
+      required: [id, name, table, mission, body, tone, initials, points]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: Sophie Lim }
+        table: { type: [string, "null"], example: "Cosmos · 12" }
+        mission:
+          type: string
+          description: The mission's kicker.
+          example: Find your twin
+        body: { type: string, example: "We absolutely did not plan this 🍒" }
+        mediaUrl: { type: [string, "null"] }
+        mediaType: { type: [string, "null"] }
+        tone:
+          type: string
+          description: The mission's colour, used for card styling.
+          example: coral
+        initials: { type: string, example: SL }
+        points: { type: integer, example: 20 }
+
+    LeaderboardEntry:
+      type: object
+      required: [name, points, initials]
+      properties:
+        name: { type: string, example: Alex Tan }
+        points: { type: integer, example: 40 }
+        initials: { type: string, example: AT }
+
+    Score:
+      type: object
+      required: [points, pendingCount, approvedCount]
+      properties:
+        points:
+          type: integer
+          description: SUM(points) over submissions where status <> 'rejected'.
+          example: 40
+        pendingCount: { type: integer, example: 1 }
+        approvedCount: { type: integer, example: 1 }
+
+    Progress:
+      type: object
+      required: [missionIndex]
+      properties:
+        missionIndex: { type: integer, example: 0 }
+
+    SubmissionResult:
+      type: object
+      required: [id, missionId, points, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        missionId: { type: integer, example: 2 }
+        points: { type: integer, example: 10 }
+        status: { type: string, enum: [pending, approved, rejected] }
+        createdAt: { type: string, format: date-time }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, example: Unknown mission }
+        fields:
+          type: array
+          items: { type: string }
+          description: Present on some validation errors.

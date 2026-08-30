@@ -39,13 +39,22 @@ docs/
 
 ## API routes
 
+Backed by Supabase Postgres via `lib/server/wedding-repository.js`.
+
 | Route | Method | Purpose |
 | --- | --- | --- |
 | `/api/health` | GET | Deployment health check |
-| `/api/guests?q=` | GET | Guest and table lookup |
-| `/api/missions` | GET | Available missions |
-| `/api/posts` | GET, POST | Wedding wall submissions |
-| `/api/leaderboard` | GET | Top guests and scores |
+| `/api/guests?q=` | GET | Guest name search (max 8) |
+| `/api/guests/{id}` | GET | Viewer bootstrap: guest, score, deck position |
+| `/api/guests/{id}/progress` | PUT | Save the guest's mission-deck position |
+| `/api/missions` | GET | Active missions (the card deck) |
+| `/api/posts` | GET | Wedding wall — approved submissions only |
+| `/api/submissions` | POST | Submit a mission answer (created as `pending`) |
+| `/api/leaderboard` | GET | Top 5 guests by points |
+
+Full request/response schemas: [`docs/openapi.yaml`](docs/openapi.yaml). With the
+dev server running, browse it at `http://localhost:3000/api-docs.html` (Swagger
+UI; the spec is served from `/api/openapi`).
 
 ## Connecting the production backend
 
